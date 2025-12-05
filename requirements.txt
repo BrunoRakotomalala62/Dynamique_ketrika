@@ -6,3 +6,4 @@ beautifulsoup4
 flask
 gunicorn
 requests
+yt-dlp

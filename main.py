@@ -1,10 +1,16 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_file
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 import re
+import os
+import tempfile
+import yt_dlp
+import uuid
 
 app = Flask(__name__)
+
+DOWNLOAD_DIR = tempfile.gettempdir()
 
 def clean_title(raw_title):
     if not raw_title:
@@ -128,6 +134,118 @@ def recherche():
     
     return jsonify(result)
 
+@app.route("/download", methods=["GET"])
+def download_video():
+    video_url = request.args.get("url", "")
+    quality = request.args.get("quality", "best")
+    
+    if not video_url:
+        return jsonify({"success": False, "error": "URL de vidéo requise. Utilisez ?url=VIDEO_URL"}), 400
+    
+    unique_id = str(uuid.uuid4())[:8]
+    output_template = os.path.join(DOWNLOAD_DIR, f'video_{unique_id}.%(ext)s')
+    
+    if quality == "low":
+        format_option = 'worst[ext=mp4]/worst'
+    elif quality == "medium":
+        format_option = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best'
+    else:
+        format_option = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    
+    ydl_opts = {
+        'format': format_option,
+        'outtmpl': output_template,
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+        'noplaylist': True,
+        'merge_output_format': 'mp4',
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=True)
+            
+            title = info.get('title', 'video')
+            safe_title = re.sub(r'[^\w\s-]', '', title)[:50]
+            
+            downloaded_file = None
+            for ext in ['mp4', 'webm', 'mkv', 'mp3', 'm4a']:
+                potential_file = os.path.join(DOWNLOAD_DIR, f'video_{unique_id}.{ext}')
+                if os.path.exists(potential_file):
+                    downloaded_file = potential_file
+                    break
+            
+            if not downloaded_file:
+                for f in os.listdir(DOWNLOAD_DIR):
+                    if f.startswith(f'video_{unique_id}'):
+                        downloaded_file = os.path.join(DOWNLOAD_DIR, f)
+                        break
+            
+            if downloaded_file and os.path.exists(downloaded_file):
+                ext = os.path.splitext(downloaded_file)[1]
+                download_name = f"{safe_title}{ext}"
+                
+                return send_file(
+                    downloaded_file,
+                    as_attachment=True,
+                    download_name=download_name,
+                    mimetype='video/mp4'
+                )
+            else:
+                return jsonify({
+                    "success": False, 
+                    "error": "Fichier téléchargé introuvable"
+                }), 500
+                
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@app.route("/info", methods=["GET"])
+def video_info():
+    video_url = request.args.get("url", "")
+    
+    if not video_url:
+        return jsonify({"success": False, "error": "URL de vidéo requise"}), 400
+    
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            
+            return jsonify({
+                "success": True,
+                "titre": info.get('title'),
+                "duree": info.get('duration'),
+                "thumbnail": info.get('thumbnail'),
+                "channel": info.get('channel') or info.get('uploader'),
+                "view_count": info.get('view_count'),
+                "upload_date": info.get('upload_date'),
+                "description": info.get('description', '')[:500] if info.get('description') else None,
+                "formats_disponibles": [
+                    {
+                        "format_id": f.get('format_id'),
+                        "ext": f.get('ext'),
+                        "resolution": f.get('resolution') or f"{f.get('width', '?')}x{f.get('height', '?')}",
+                        "filesize": f.get('filesize') or f.get('filesize_approx')
+                    }
+                    for f in info.get('formats', [])[:10]
+                ]
+            })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 @app.route("/html", methods=["GET"])
 def get_raw_html():
     video_query = request.args.get("video", "film malagasy complet")
@@ -152,15 +270,20 @@ def get_raw_html():
 @app.route("/")
 def index():
     return jsonify({
-        "message": "API Google Video Search Scraper",
+        "message": "API Google Video Search & Downloader",
         "endpoints": {
             "/recherche": "GET - Scrape et parse les résultats vidéo Google",
+            "/download": "GET - Télécharger une vidéo YouTube/Dailymotion",
+            "/info": "GET - Obtenir les infos d'une vidéo",
             "/html": "GET - Récupère le HTML brut de Google"
         },
         "usage": {
             "recherche": "/recherche?video=film malagasy complet",
+            "download": "/download?url=https://youtube.com/watch?v=XXX&quality=best",
+            "info": "/info?url=https://youtube.com/watch?v=XXX",
             "html": "/html?video=film malagasy complet"
-        }
+        },
+        "qualites": ["best", "medium", "low"]
     })
 
 if __name__ == "__main__":
