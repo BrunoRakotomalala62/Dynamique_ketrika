@@ -146,11 +146,11 @@ def download_video():
     output_template = os.path.join(DOWNLOAD_DIR, f'video_{unique_id}.%(ext)s')
     
     if quality == "low":
-        format_option = 'worst[ext=mp4]/worst'
+        format_option = 'worst[ext=mp4]/worstvideo[ext=mp4]+worstaudio/worst'
     elif quality == "medium":
-        format_option = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]/best'
+        format_option = 'best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best'
     else:
-        format_option = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        format_option = 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best'
     
     ydl_opts = {
         'format': format_option,
@@ -160,6 +160,10 @@ def download_video():
         'extract_flat': False,
         'noplaylist': True,
         'merge_output_format': 'mp4',
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
     }
     
     try:
